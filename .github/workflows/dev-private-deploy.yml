@@ -7,8 +7,6 @@ on:
       - dev
       - test
       - pre
-    branches-ignore:
-      - 'gh-pages'
   workflow_dispatch:
     inputs:
       branch:
