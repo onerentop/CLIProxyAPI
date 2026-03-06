@@ -156,23 +156,23 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 		out, _ = sjson.SetRaw(out, "messages.-1", msg)
 	}
 
-	// Convert tools from responses format to chat completions format
+	// Convert tools from responses format to chat completions format.
+	// Preserve built-in tools (e.g. {"type":"web_search"}) so downstream
+	// translators/providers can retain web search capability.
 	if tools := root.Get("tools"); tools.Exists() && tools.IsArray() {
 		var chatCompletionsTools []interface{}
 
 		tools.ForEach(func(_, tool gjson.Result) bool {
-			// Built-in tools (e.g. {"type":"web_search"}) are already compatible with the Chat Completions schema.
-			// Only function tools need structural conversion because Chat Completions nests details under "function".
+			// Built-in tools are already Chat Completions-compatible and should be preserved.
 			toolType := tool.Get("type").String()
 			if toolType != "" && toolType != "function" && tool.IsObject() {
-				// Almost all providers lack built-in tools, so we just ignore them.
-				// chatCompletionsTools = append(chatCompletionsTools, tool.Value())
+				chatCompletionsTools = append(chatCompletionsTools, tool.Value())
 				return true
 			}
 
 			chatTool := `{"type":"function","function":{}}`
 
-			// Convert tool structure from responses format to chat completions format
+			// Convert function tool structure from responses format to chat completions format.
 			function := `{"name":"","description":"","parameters":{}}`
 
 			if name := tool.Get("name"); name.Exists() {
@@ -205,9 +205,15 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 		}
 	}
 
-	// Convert tool_choice if present
+	// Convert tool_choice if present.
+	// Preserve object-form choices (including built-in tool choices like
+	// {"type":"web_search"}) as-is.
 	if toolChoice := root.Get("tool_choice"); toolChoice.Exists() {
-		out, _ = sjson.Set(out, "tool_choice", toolChoice.String())
+		if toolChoice.Type == gjson.String {
+			out, _ = sjson.Set(out, "tool_choice", toolChoice.String())
+		} else {
+			out, _ = sjson.SetRaw(out, "tool_choice", toolChoice.Raw)
+		}
 	}
 
 	return []byte(out)
