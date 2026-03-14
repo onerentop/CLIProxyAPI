@@ -5,7 +5,6 @@ package watcher
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
 
@@ -237,22 +236,16 @@ func (w *Watcher) stopDispatch() {
 	w.clientsMutex.Unlock()
 }
 
+// authEqual compares two auth objects by their content hash.
+// This is significantly faster than reflect.DeepEqual, especially for large auth counts.
 func authEqual(a, b *coreauth.Auth) bool {
-	return reflect.DeepEqual(normalizeAuth(a), normalizeAuth(b))
-}
-
-func normalizeAuth(a *coreauth.Auth) *coreauth.Auth {
-	if a == nil {
-		return nil
+	if a == nil && b == nil {
+		return true
 	}
-	clone := a.Clone()
-	clone.CreatedAt = time.Time{}
-	clone.UpdatedAt = time.Time{}
-	clone.LastRefreshedAt = time.Time{}
-	clone.NextRefreshAfter = time.Time{}
-	clone.Runtime = nil
-	clone.Quota.NextRecoverAt = time.Time{}
-	return clone
+	if a == nil || b == nil {
+		return false
+	}
+	return a.ContentHash() == b.ContentHash()
 }
 
 func snapshotCoreAuths(cfg *config.Config, authDir string) []*coreauth.Auth {

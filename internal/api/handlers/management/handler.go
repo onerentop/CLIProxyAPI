@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,12 @@ type Handler struct {
 	envSecret           string
 	logDir              string
 	postAuthHook        coreauth.PostAuthHook
+
+	// Auth list cache: avoids rebuilding the full list on every API call.
+	authListCacheMu sync.RWMutex
+	authListCache   []gin.H          // cached list entries
+	authListVersion atomic.Int64     // incremented on invalidation
+	authListBuilt   int64            // version when cache was last built
 }
 
 // NewHandler creates a new management handler instance.

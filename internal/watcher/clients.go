@@ -60,23 +60,14 @@ func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string
 	totalAPIKeyClients := geminiAPIKeyCount + vertexCompatAPIKeyCount + claudeAPIKeyCount + codexAPIKeyCount + openAICompatCount
 	log.Debugf("loaded %d API key clients", totalAPIKeyClients)
 
+	// Combined scan: count auth files AND build hash/content caches in a single pass.
 	var authFileCount int
 	if rescanAuth {
-		authFileCount = w.loadFileClients(cfg)
-		log.Debugf("loaded %d file-based clients", authFileCount)
-	} else {
-		w.clientsMutex.RLock()
-		authFileCount = len(w.lastAuthHashes)
-		w.clientsMutex.RUnlock()
-		log.Debugf("skipping auth directory rescan; retaining %d existing auth files", authFileCount)
-	}
-
-	if rescanAuth {
 		w.clientsMutex.Lock()
-
 		w.lastAuthHashes = make(map[string]string)
 		w.lastAuthContents = make(map[string]*coreauth.Auth)
 		w.fileAuthsByPath = make(map[string]map[string]*coreauth.Auth)
+
 		if resolvedAuthDir, errResolveAuthDir := util.ResolveAuthDir(cfg.AuthDir); errResolveAuthDir != nil {
 			log.Errorf("failed to resolve auth directory for hash cache: %v", errResolveAuthDir)
 		} else if resolvedAuthDir != "" {
@@ -85,6 +76,7 @@ func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string
 					return nil
 				}
 				if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".json") {
+					authFileCount++
 					if data, errReadFile := os.ReadFile(path); errReadFile == nil && len(data) > 0 {
 						sum := sha256.Sum256(data)
 						normalizedPath := w.normalizeAuthPath(path)
@@ -111,6 +103,12 @@ func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string
 			})
 		}
 		w.clientsMutex.Unlock()
+		log.Debugf("auth directory scan complete - found %d .json files (single-pass)", authFileCount)
+	} else {
+		w.clientsMutex.RLock()
+		authFileCount = len(w.lastAuthHashes)
+		w.clientsMutex.RUnlock()
+		log.Debugf("skipping auth directory rescan; retaining %d existing auth files", authFileCount)
 	}
 
 	totalNewClients := authFileCount + geminiAPIKeyCount + vertexCompatAPIKeyCount + claudeAPIKeyCount + codexAPIKeyCount + openAICompatCount

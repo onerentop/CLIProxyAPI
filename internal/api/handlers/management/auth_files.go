@@ -243,10 +243,76 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		h.listAuthFilesFromDisk(c)
 		return
 	}
-	auths := h.authManager.List()
+
+	// Retrieve or rebuild the cached auth file list.
+	files := h.getOrBuildAuthListCache()
+
+	// Pagination support (backward-compatible: defaults to returning all).
+	total := len(files)
+	pageStr := strings.TrimSpace(c.Query("page"))
+	pageSizeStr := strings.TrimSpace(c.Query("page_size"))
+
+	if pageStr != "" || pageSizeStr != "" {
+		page := 1
+		pageSize := 100
+		if v, err := strconv.Atoi(pageStr); err == nil && v > 0 {
+			page = v
+		}
+		if v, err := strconv.Atoi(pageSizeStr); err == nil && v > 0 {
+			if v > 1000 {
+				v = 1000
+			}
+			pageSize = v
+		}
+		start := (page - 1) * pageSize
+		if start >= total {
+			c.JSON(200, gin.H{"files": []gin.H{}, "total": total, "page": page, "page_size": pageSize})
+			return
+		}
+		end := start + pageSize
+		if end > total {
+			end = total
+		}
+		c.JSON(200, gin.H{"files": files[start:end], "total": total, "page": page, "page_size": pageSize})
+		return
+	}
+
+	c.JSON(200, gin.H{"files": files})
+}
+
+// InvalidateAuthListCache marks the auth list cache as stale. This should be called
+// whenever auth entries are added, updated, or removed.
+func (h *Handler) InvalidateAuthListCache() {
+	if h == nil {
+		return
+	}
+	h.authListVersion.Add(1)
+}
+
+// getOrBuildAuthListCache returns the cached auth list or rebuilds it if stale.
+func (h *Handler) getOrBuildAuthListCache() []gin.H {
+	currentVersion := h.authListVersion.Load()
+
+	// Fast path: cache is valid.
+	h.authListCacheMu.RLock()
+	if h.authListCache != nil && h.authListBuilt == currentVersion {
+		result := h.authListCache
+		h.authListCacheMu.RUnlock()
+		return result
+	}
+	h.authListCacheMu.RUnlock()
+
+	// Slow path: rebuild cache.
+	// Use ListSnapshot to avoid N deep copies under the manager's lock.
+	// We still need a shallow Clone per entry because buildAuthFileEntry calls
+	// EnsureIndex() which writes to the Auth object (Index, indexAssigned).
+	// Without cloning, this would race with other goroutines that read/write
+	// the same Auth pointer concurrently.
+	auths := h.authManager.ListSnapshot()
 	files := make([]gin.H, 0, len(auths))
 	for _, auth := range auths {
-		if entry := h.buildAuthFileEntry(auth); entry != nil {
+		clone := auth.Clone()
+		if entry := h.buildAuthFileEntry(clone); entry != nil {
 			files = append(files, entry)
 		}
 	}
@@ -255,7 +321,14 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		nameJ, _ := files[j]["name"].(string)
 		return strings.ToLower(nameI) < strings.ToLower(nameJ)
 	})
-	c.JSON(200, gin.H{"files": files})
+
+	// Store in cache.
+	h.authListCacheMu.Lock()
+	h.authListCache = files
+	h.authListBuilt = currentVersion
+	h.authListCacheMu.Unlock()
+
+	return files
 }
 
 // GetAuthFileModels returns the models supported by a specific auth file
@@ -269,7 +342,7 @@ func (h *Handler) GetAuthFileModels(c *gin.Context) {
 	// Try to find auth ID via authManager
 	var authID string
 	if h.authManager != nil {
-		auths := h.authManager.List()
+		auths := h.authManager.ListSnapshot()
 		for _, auth := range auths {
 			if auth.FileName == name || auth.ID == name {
 				authID = auth.ID
@@ -353,6 +426,13 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	if path == "" && !runtimeOnly {
 		return nil
 	}
+	// Hide credentials that were removed via management API.
+	// Previously this relied on os.Stat to detect deleted files, but checking
+	// the status/message is much cheaper and avoids thousands of disk I/O calls.
+	if !runtimeOnly && (auth.Disabled || auth.Status == coreauth.StatusDisabled) &&
+		strings.EqualFold(strings.TrimSpace(auth.StatusMessage), "removed via management api") {
+		return nil
+	}
 	name := strings.TrimSpace(auth.FileName)
 	if name == "" {
 		name = auth.ID
@@ -399,17 +479,10 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	if path != "" {
 		entry["path"] = path
 		entry["source"] = "file"
-		if info, err := os.Stat(path); err == nil {
-			entry["size"] = info.Size()
-			entry["modtime"] = info.ModTime()
-		} else if os.IsNotExist(err) {
-			// Hide credentials removed from disk but still lingering in memory.
-			if !runtimeOnly && (auth.Disabled || auth.Status == coreauth.StatusDisabled || strings.EqualFold(strings.TrimSpace(auth.StatusMessage), "removed via management api")) {
-				return nil
-			}
-			entry["source"] = "memory"
-		} else {
-			log.WithError(err).Warnf("failed to stat auth file %s", path)
+		// Use the auth's UpdatedAt timestamp instead of calling os.Stat for every file.
+		// This avoids thousands of disk I/O operations when listing many auth files.
+		if !auth.UpdatedAt.IsZero() {
+			entry["modtime"] = auth.UpdatedAt
 		}
 	}
 	if claims := extractCodexIDTokenClaims(auth); claims != nil {

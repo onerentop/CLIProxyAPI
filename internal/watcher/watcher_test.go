@@ -81,7 +81,9 @@ func TestBuildAPIKeyClientsCounts(t *testing.T) {
 
 func TestNormalizeAuthStripsTemporalFields(t *testing.T) {
 	now := time.Now()
-	auth := &coreauth.Auth{
+	auth1 := &coreauth.Auth{
+		ID:               "test",
+		Provider:         "gemini",
 		CreatedAt:        now,
 		UpdatedAt:        now,
 		LastRefreshedAt:  now,
@@ -91,16 +93,15 @@ func TestNormalizeAuthStripsTemporalFields(t *testing.T) {
 		},
 		Runtime: map[string]any{"k": "v"},
 	}
-
-	normalized := normalizeAuth(auth)
-	if !normalized.CreatedAt.IsZero() || !normalized.UpdatedAt.IsZero() || !normalized.LastRefreshedAt.IsZero() || !normalized.NextRefreshAfter.IsZero() {
-		t.Fatal("expected time fields to be zeroed")
+	auth2 := &coreauth.Auth{
+		ID:       "test",
+		Provider: "gemini",
+		// All temporal fields are zero, Runtime is nil.
 	}
-	if normalized.Runtime != nil {
-		t.Fatal("expected runtime to be nil")
-	}
-	if !normalized.Quota.NextRecoverAt.IsZero() {
-		t.Fatal("expected quota.NextRecoverAt to be zeroed")
+	// authEqual (via ContentHash) should treat these as equal since
+	// temporal fields and Runtime are excluded from the hash.
+	if !authEqual(auth1, auth2) {
+		t.Fatal("expected authEqual to return true when only temporal fields differ")
 	}
 }
 
@@ -1475,9 +1476,15 @@ func TestDispatchRuntimeAuthUpdateReturnsFalseWithoutQueue(t *testing.T) {
 	}
 }
 
-func TestNormalizeAuthNil(t *testing.T) {
-	if normalizeAuth(nil) != nil {
-		t.Fatal("expected normalizeAuth(nil) to return nil")
+func TestAuthEqualNilHandling(t *testing.T) {
+	if !authEqual(nil, nil) {
+		t.Fatal("expected authEqual(nil, nil) to return true")
+	}
+	if authEqual(nil, &coreauth.Auth{ID: "a"}) {
+		t.Fatal("expected authEqual(nil, non-nil) to return false")
+	}
+	if authEqual(&coreauth.Auth{ID: "a"}, nil) {
+		t.Fatal("expected authEqual(non-nil, nil) to return false")
 	}
 }
 

@@ -839,6 +839,16 @@ func (s *Server) Stop(ctx context.Context) error {
 	return nil
 }
 
+// InvalidateAuthListCache invalidates the cached auth file list, forcing it
+// to be rebuilt on the next ListAuthFiles API call. Call this whenever auth
+// entries are added, updated, or removed.
+func (s *Server) InvalidateAuthListCache() {
+	if s == nil || s.mgmt == nil {
+		return
+	}
+	s.mgmt.InvalidateAuthListCache()
+}
+
 // corsMiddleware returns a Gin middleware handler that adds CORS headers
 // to every response, allowing cross-origin requests.
 //

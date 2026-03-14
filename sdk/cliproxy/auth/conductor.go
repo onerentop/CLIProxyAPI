@@ -1985,6 +1985,27 @@ func (m *Manager) List() []*Auth {
 	return list
 }
 
+// ListSnapshot returns a read-only snapshot of all auth entries without cloning.
+// The returned slice shares pointers with the manager's internal map, so callers
+// MUST NOT modify any of the returned Auth objects. This is significantly faster
+// than List() for large auth counts (avoids N deep copies).
+func (m *Manager) ListSnapshot() []*Auth {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	list := make([]*Auth, 0, len(m.auths))
+	for _, auth := range m.auths {
+		list = append(list, auth)
+	}
+	return list
+}
+
+// Count returns the number of auth entries currently known by the manager.
+func (m *Manager) Count() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.auths)
+}
+
 // GetByID retrieves an auth entry by its ID.
 
 func (m *Manager) GetByID(id string) (*Auth, bool) {
