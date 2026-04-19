@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -151,6 +153,78 @@ func (a *Auth) Clone() *Auth {
 	}
 	copyAuth.Runtime = a.Runtime
 	return &copyAuth
+}
+
+// ContentHash returns a stable SHA256 hash of the auth's configuration-relevant fields.
+// It deliberately excludes volatile runtime state (CreatedAt, UpdatedAt, LastRefreshedAt,
+// NextRefreshAfter, Runtime, Quota.NextRecoverAt) so that two auth objects
+// with the same logical configuration produce identical hashes. This is significantly
+// faster than reflect.DeepEqual for equality checking.
+func (a *Auth) ContentHash() string {
+	if a == nil {
+		return ""
+	}
+	h := sha256.New()
+	// Write deterministic fields in a fixed order.
+	fmt.Fprintf(h, "id:%s\n", a.ID)
+	fmt.Fprintf(h, "provider:%s\n", a.Provider)
+	fmt.Fprintf(h, "prefix:%s\n", a.Prefix)
+	fmt.Fprintf(h, "filename:%s\n", a.FileName)
+	fmt.Fprintf(h, "label:%s\n", a.Label)
+	fmt.Fprintf(h, "status:%s\n", a.Status)
+	fmt.Fprintf(h, "status_message:%s\n", a.StatusMessage)
+	fmt.Fprintf(h, "disabled:%t\n", a.Disabled)
+	fmt.Fprintf(h, "unavailable:%t\n", a.Unavailable)
+	fmt.Fprintf(h, "proxy_url:%s\n", a.ProxyURL)
+	fmt.Fprintf(h, "next_retry_after:%d\n", a.NextRetryAfter.UnixNano())
+
+	// Quota: include Exceeded, Reason, and BackoffLevel but exclude NextRecoverAt
+	// (volatile timestamp). This matches the fields preserved by the legacy
+	// normalizeAuth function.
+	fmt.Fprintf(h, "quota_exceeded:%t\n", a.Quota.Exceeded)
+	fmt.Fprintf(h, "quota_reason:%s\n", a.Quota.Reason)
+	fmt.Fprintf(h, "quota_backoff:%d\n", a.Quota.BackoffLevel)
+
+	// LastError: include error details so state changes propagate correctly.
+	if a.LastError != nil {
+		fmt.Fprintf(h, "last_error:%s:%s:%t:%d\n", a.LastError.Code, a.LastError.Message, a.LastError.Retryable, a.LastError.HTTPStatus)
+	}
+
+	// Attributes: sorted keys for deterministic output.
+	if len(a.Attributes) > 0 {
+		keys := make([]string, 0, len(a.Attributes))
+		for k := range a.Attributes {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(h, "attr:%s=%s\n", k, a.Attributes[k])
+		}
+	}
+
+	// Metadata: serialize as JSON for deterministic representation of nested values.
+	if len(a.Metadata) > 0 {
+		if data, err := json.Marshal(a.Metadata); err == nil {
+			fmt.Fprintf(h, "meta:%s\n", data)
+		}
+	}
+
+	// ModelStates: sorted keys, include status fields only.
+	if len(a.ModelStates) > 0 {
+		keys := make([]string, 0, len(a.ModelStates))
+		for k := range a.ModelStates {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			ms := a.ModelStates[k]
+			if ms != nil {
+				fmt.Fprintf(h, "ms:%s:%s:%t\n", k, ms.Status, ms.Unavailable)
+			}
+		}
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func stableAuthIndex(seed string) string {

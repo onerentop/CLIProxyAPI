@@ -125,8 +125,12 @@ func (s *Service) ensureAuthUpdateQueue(ctx context.Context) {
 	go s.consumeAuthUpdates(queueCtx)
 }
 
+// authUpdateWorkers controls the number of concurrent auth update handlers.
+const authUpdateWorkers = 4
+
 func (s *Service) consumeAuthUpdates(ctx context.Context) {
 	ctx = coreauth.WithSkipPersist(ctx)
+	sem := make(chan struct{}, authUpdateWorkers)
 	for {
 		select {
 		case <-ctx.Done():
@@ -135,12 +139,31 @@ func (s *Service) consumeAuthUpdates(ctx context.Context) {
 			if !ok {
 				return
 			}
-			s.handleAuthUpdate(ctx, update)
+			// Acquire a worker slot, but also respect context cancellation
+			// to avoid blocking forever when all workers are busy.
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			go func(u watcher.AuthUpdate) {
+				defer func() { <-sem }()
+				s.handleAuthUpdate(ctx, u)
+			}(update)
+			// Drain any immediately available updates into worker pool.
 		labelDrain:
 			for {
 				select {
 				case nextUpdate := <-s.authUpdates:
-					s.handleAuthUpdate(ctx, nextUpdate)
+					select {
+					case sem <- struct{}{}:
+					case <-ctx.Done():
+						return
+					}
+					go func(u watcher.AuthUpdate) {
+						defer func() { <-sem }()
+						s.handleAuthUpdate(ctx, u)
+					}(nextUpdate)
 				default:
 					break labelDrain
 				}
@@ -179,6 +202,10 @@ func (s *Service) handleAuthUpdate(ctx context.Context, update watcher.AuthUpdat
 	s.cfgMu.RUnlock()
 	if cfg == nil || s.coreManager == nil {
 		return
+	}
+	// Invalidate the cached auth list so the management API reflects changes.
+	if s.server != nil {
+		s.server.InvalidateAuthListCache()
 	}
 	switch update.Action {
 	case watcher.AuthUpdateActionAdd, watcher.AuthUpdateActionModify:

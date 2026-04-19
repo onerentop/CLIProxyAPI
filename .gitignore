@@ -50,3 +50,7 @@ _bmad-output/*
 # macOS
 .DS_Store
 ._*
+
+# 异常生成的目录
+%USERPROFILE%/
+.spec-workflow/
