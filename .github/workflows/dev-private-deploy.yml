@@ -200,18 +200,18 @@ jobs:
             docker compose ps
 
   # =========================================================================
-  # 生产环境部署：仅 pre 或 main 分支部署到生产服务器
+  # 生产环境部署：dev / pre / main 分支部署到生产服务器
   # =========================================================================
   deploy-prod:
     needs: build-and-push
     runs-on: ubuntu-latest
-    # 自动模式：pre 或 main 分支 → 生产环境
-    # 手动模式：environment=prod 或 (environment=auto 且 pre/main 分支)
+    # 自动模式：dev / pre / main 分支 → 生产环境
+    # 手动模式：environment=prod 或 (environment=auto 且 dev/pre/main 分支)
     if: |
-      (github.event_name == 'push' && (github.ref_name == 'pre' || github.ref_name == 'main')) ||
+      (github.event_name == 'push' && (github.ref_name == 'dev' || github.ref_name == 'pre' || github.ref_name == 'main')) ||
       (github.event_name == 'workflow_dispatch' && (
         github.event.inputs.environment == 'prod' ||
-        (github.event.inputs.environment == 'auto' && (github.ref_name == 'pre' || github.ref_name == 'main'))
+        (github.event.inputs.environment == 'auto' && (github.ref_name == 'dev' || github.ref_name == 'pre' || github.ref_name == 'main'))
       ))
     steps:
       - name: Checkout code
