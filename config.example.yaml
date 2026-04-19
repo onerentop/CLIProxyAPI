@@ -226,6 +226,24 @@ nonstream-keepalive-interval: 0
 #   user-agent: "codex_cli_rs/0.114.0 (Mac OS 14.2.0; x86_64) vscode/1.111.0"
 #   beta-features: "multi_agent"
 
+# Inject a developer-role message at the head of the Codex Responses API
+# input[] array. This never touches the `instructions` field (which the
+# ChatGPT-Codex backend validates server-side and will reject with
+# 400 "Instructions are not valid" if tampered with).
+# - enabled: master switch (default false; keep off unless you need proxy-side prompt injection)
+# - file: path to a plain-text / markdown file containing the prompt
+# - models: optional list of model-name prefixes to restrict injection
+#   (empty = all codex/gpt requests). Matched case-insensitively.
+# - role: message role; defaults to "developer". Use "user" if the upstream
+#   rejects developer-role inputs.
+# codex-system-prompt:
+#   enabled: true
+#   file: "prompts/codex_system.md"
+#   models:
+#     - "gpt-5"
+#     - "codex"
+#   role: "developer"
+
 # OpenAI compatibility providers
 # openai-compatibility:
 #   - name: "openrouter" # The name of the provider; it will be used in the user agent and other places.

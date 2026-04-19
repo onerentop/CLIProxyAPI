@@ -106,6 +106,11 @@ type Config struct {
 	// These are used only when the client does not send its own headers.
 	CodexHeaderDefaults CodexHeaderDefaults `yaml:"codex-header-defaults" json:"codex-header-defaults"`
 
+	// CodexSystemPrompt injects a developer-role message at the head of the Codex
+	// Responses API input[] array. It never touches the `instructions` field
+	// (which OpenAI validates server-side) to avoid 400 "Instructions are not valid".
+	CodexSystemPrompt CodexSystemPrompt `yaml:"codex-system-prompt,omitempty" json:"codex-system-prompt,omitempty"`
+
 	// ClaudeKey defines a list of Claude API key configurations as specified in the YAML configuration file.
 	ClaudeKey []ClaudeKey `yaml:"claude-api-key" json:"claude-api-key"`
 
@@ -161,6 +166,17 @@ type ClaudeHeaderDefaults struct {
 type CodexHeaderDefaults struct {
 	UserAgent    string `yaml:"user-agent" json:"user-agent"`
 	BetaFeatures string `yaml:"beta-features" json:"beta-features"`
+}
+
+// CodexSystemPrompt controls proxy-side injection of a developer/user message
+// into the Codex Responses API input[] array.
+// File is reloaded on mtime change; Models filters by model-name prefix (empty = all);
+// Role defaults to "developer" when unset.
+type CodexSystemPrompt struct {
+	Enabled bool     `yaml:"enabled" json:"enabled"`
+	File    string   `yaml:"file" json:"file"`
+	Models  []string `yaml:"models,omitempty" json:"models,omitempty"`
+	Role    string   `yaml:"role,omitempty" json:"role,omitempty"`
 }
 
 // TLSConfig holds HTTPS server settings.
